@@ -1,0 +1,22 @@
+project_id = "dgbjcjcxdiyugbcbkrpp"
+
+[functions.send-notification]
+verify_jwt = false
+
+[functions.bulk-create-faculty]
+verify_jwt = true
+
+[functions.bulk-create-students]
+verify_jwt = true
+
+[functions.verify-handwriting]
+verify_jwt = false
+
+[functions.extract-handwriting-features]
+verify_jwt = false
+
+[functions.deadline-reminder]
+verify_jwt = false
+
+[functions.resolve-submission-files]
+verify_jwt = false

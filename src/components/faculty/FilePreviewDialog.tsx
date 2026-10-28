@@ -1,0 +1,256 @@
+import { useState, useEffect, useCallback } from 'react';
+import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Button } from '@/components/ui/button';
+import { Badge } from '@/components/ui/badge';
+import { ExternalLink, Download, Image, Loader2, AlertCircle, ChevronLeft, ChevronRight } from 'lucide-react';
+import { cn } from '@/lib/utils';
+import { supabase } from '@/integrations/supabase/client';
+
+interface FilePreviewDialogProps {
+  open: boolean;
+  onOpenChange: (open: boolean) => void;
+  fileUrl: string | null;
+  fileUrls?: string[] | null;
+  fileType: string | null;
+  studentName?: string;
+  assignmentTitle?: string;
+  submissionId: string;
+}
+
+const FilePreviewDialog = ({
+  open,
+  onOpenChange,
+  fileUrl,
+  fileUrls,
+  fileType,
+  studentName,
+  assignmentTitle,
+  submissionId,
+}: FilePreviewDialogProps) => {
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState(false);
+  const [currentPage, setCurrentPage] = useState(0);
+  const [resolvingUrls, setResolvingUrls] = useState(false);
+  const [resolvedUrls, setResolvedUrls] = useState<string[]>([]);
+
+  const resolveSignedUrls = useCallback(async () => {
+    if (!submissionId) {
+      setResolvedUrls(fileUrls?.length ? fileUrls : fileUrl ? [fileUrl] : []);
+      return;
+    }
+
+    setResolvingUrls(true);
+
+    const attemptFetch = async (attempt: number): Promise<string[]> => {
+      try {
+        const { data, error } = await supabase.functions.invoke('resolve-submission-files', {
+          body: { submission_id: submissionId }
+        });
+
+        if (!error && data?.signed_urls?.length > 0) {
+          return data.signed_urls;
+        }
+
+        if (attempt < 2) {
+          await new Promise(r => setTimeout(r, 1500));
+          return attemptFetch(attempt + 1);
+        }
+
+        return fileUrls?.length ? fileUrls : fileUrl ? [fileUrl] : [];
+      } catch {
+        if (attempt < 2) {
+          await new Promise(r => setTimeout(r, 1500));
+          return attemptFetch(attempt + 1);
+        }
+        return fileUrls?.length ? fileUrls : fileUrl ? [fileUrl] : [];
+      }
+    };
+
+    try {
+      const urls = await attemptFetch(1);
+      setResolvedUrls(urls);
+    } catch {
+      setResolvedUrls(fileUrls?.length ? fileUrls : fileUrl ? [fileUrl] : []);
+    } finally {
+      setResolvingUrls(false);
+    }
+  }, [submissionId, fileUrls, fileUrl]);
+
+  useEffect(() => {
+    if (open) {
+      resolveSignedUrls();
+    }
+  }, [open, resolveSignedUrls]);
+
+  const allUrls = resolvedUrls.length > 0 ? resolvedUrls : (fileUrls && fileUrls.length > 0 ? fileUrls : (fileUrl ? [fileUrl] : []));
+  const totalPages = allUrls.length;
+  const currentUrl = allUrls[currentPage] || null;
+
+  if (!currentUrl && !resolvingUrls) return null;
+
+  const isImage = fileType?.startsWith('image') || 
+    currentUrl?.match(/\.(jpg|jpeg|png|gif|webp|bmp)$/i);
+
+  const handleLoad = () => {
+    setLoading(false);
+    setError(false);
+  };
+
+  const handleError = () => {
+    setLoading(false);
+    setError(true);
+  };
+
+  const goToPrevious = () => {
+    setLoading(true);
+    setCurrentPage(prev => Math.max(0, prev - 1));
+  };
+
+  const goToNext = () => {
+    setLoading(true);
+    setCurrentPage(prev => Math.min(totalPages - 1, prev + 1));
+  };
+
+  const getPreviewContent = () => {
+    if (resolvingUrls) {
+      return (
+        <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
+          <Loader2 className="w-8 h-8 animate-spin mb-4" />
+          <p className="text-sm">Loading preview...</p>
+        </div>
+      );
+    }
+
+    if (error) {
+      return (
+        <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
+          <AlertCircle className="w-12 h-12 mb-4 text-destructive" />
+          <p className="text-lg font-medium">Unable to preview file</p>
+          <p className="text-sm mt-2">Please download or open in a new tab</p>
+        </div>
+      );
+    }
+
+    if (isImage && currentUrl) {
+      return (
+        <div className="relative min-h-[400px] flex items-center justify-center">
+          {loading && (
+            <div className="absolute inset-0 flex items-center justify-center">
+              <Loader2 className="w-8 h-8 animate-spin text-faculty" />
+            </div>
+          )}
+          <img
+            src={currentUrl}
+            alt={`Page ${currentPage + 1} - Submission by ${studentName}`}
+            className="max-w-full max-h-[60vh] object-contain rounded-lg"
+            onLoad={handleLoad}
+            onError={handleError}
+          />
+        </div>
+      );
+    }
+
+    return (
+      <div className="flex flex-col items-center justify-center py-12 text-muted-foreground">
+        <Image className="w-16 h-16 mb-4" />
+        <p className="text-lg font-medium">Preview not available</p>
+        <p className="text-sm mt-2 mb-4">This file type cannot be previewed</p>
+        <div className="flex gap-2">
+          {currentUrl && (
+            <>
+              <Button variant="outline" asChild>
+                <a href={currentUrl} download>
+                  <Download className="w-4 h-4 mr-2" />
+                  Download File
+                </a>
+              </Button>
+              <Button variant="faculty" asChild>
+                <a href={currentUrl} target="_blank" rel="noopener noreferrer">
+                  <ExternalLink className="w-4 h-4 mr-2" />
+                  Open in New Tab
+                </a>
+              </Button>
+            </>
+          )}
+        </div>
+      </div>
+    );
+  };
+
+  return (
+    <Dialog open={open} onOpenChange={(isOpen) => {
+      if (!isOpen) {
+        setCurrentPage(0);
+        setLoading(true);
+        setError(false);
+        setResolvedUrls([]);
+      }
+      onOpenChange(isOpen);
+    }}>
+      <DialogContent className="max-w-4xl max-h-[90vh] overflow-hidden">
+        <DialogHeader>
+          <DialogTitle className="flex items-center gap-2">
+            <Image className="w-5 h-5" />
+            <span>
+              {studentName ? `${studentName}'s Submission` : 'Submission Preview'}
+              {assignmentTitle && <span className="text-muted-foreground font-normal"> - {assignmentTitle}</span>}
+            </span>
+          </DialogTitle>
+        </DialogHeader>
+        
+        {totalPages > 1 && (
+          <div className="flex items-center justify-center gap-4 pb-2">
+            <Button variant="outline" size="sm" onClick={goToPrevious} disabled={currentPage === 0}>
+              <ChevronLeft className="w-4 h-4" />
+            </Button>
+            <Badge variant="secondary">Page {currentPage + 1} of {totalPages}</Badge>
+            <Button variant="outline" size="sm" onClick={goToNext} disabled={currentPage === totalPages - 1}>
+              <ChevronRight className="w-4 h-4" />
+            </Button>
+          </div>
+        )}
+
+        {totalPages > 1 && (
+          <div className="flex gap-2 overflow-x-auto pb-2 px-1">
+            {allUrls.map((url, idx) => (
+              <button
+                key={idx}
+                onClick={() => { setLoading(true); setCurrentPage(idx); }}
+                className={cn(
+                  "flex-shrink-0 w-16 h-20 rounded border-2 overflow-hidden transition-all",
+                  currentPage === idx 
+                    ? "border-primary ring-2 ring-primary/20" 
+                    : "border-border hover:border-primary/50"
+                )}
+              >
+                <img src={url} alt={`Page ${idx + 1}`} className="w-full h-full object-cover" />
+              </button>
+            ))}
+          </div>
+        )}
+        
+        <div className="overflow-auto">{getPreviewContent()}</div>
+
+        <div className="flex justify-between gap-2 pt-4 border-t">
+          <div className="text-sm text-muted-foreground">
+            {totalPages > 1 && `${totalPages} pages total`}
+          </div>
+          <div className="flex gap-2">
+            {currentUrl && (
+              <>
+                <Button variant="outline" asChild>
+                  <a href={currentUrl} download><Download className="w-4 h-4 mr-2" />Download</a>
+                </Button>
+                <Button variant="faculty" asChild>
+                  <a href={currentUrl} target="_blank" rel="noopener noreferrer"><ExternalLink className="w-4 h-4 mr-2" />Open in New Tab</a>
+                </Button>
+              </>
+            )}
+          </div>
+        </div>
+      </DialogContent>
+    </Dialog>
+  );
+};
+
+export default FilePreviewDialog;
